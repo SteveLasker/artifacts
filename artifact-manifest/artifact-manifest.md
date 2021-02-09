@@ -1,6 +1,6 @@
 # OCI Artifact Manifest
 
-The OCI artifact manifest provides a means to define a wide range of artifacts, including a chain of dependencies of related artifacts. It provides a means to define multiple collections of types, including blobs, dependent artifacts and referenced artifacts.
+The OCI artifact manifest provides a means to define a wide range of artifacts, including a chain of dependencies of related artifacts. It provides a means to define artifacts that are independent, or enhance other artifact types.
 
 These collections provide the information required for:
 
@@ -74,14 +74,6 @@ A class of of artifacts will have content (blobs) that represent the artifact (e
 
 All extension artifacts are stored without tags, and must be stored in the same repository as the artifact they are extending.
 
-### Deferred Resolution
-
-To support artifact movement to various registry and namespace structures, the registry and path must not be embedded within the artifact definition. Client CLIs and configurations will provide default locations and mappings for where to find the referenced content.
-
-Artifacts that reference other artifacts must include an OCI Descriptor which includes the `manifest type`, `digest` and `size`. An annotation will include the `repo:tag`, which may be used to resolve the name of the artifact. The resolution is defered to client tools that MAY reconstitute the references from multiple repositories and/or registries.
-
-Clients MAY choose to bind to specific digests, assuring they are testing and using the exact graph initially specified. Or, clients may choose to float to a newer version of a tag, benefiting from patches. In all cases, a Notary v2 signature may be used to assure the artifacts are true to their initial ownership and authors.
-
 ## Supported Artifact Types
 
 Artifact manifest is intended to support the following artifact types:
@@ -103,16 +95,6 @@ A Notary v2 signature, or an SBoM document would persist as a manifest with a co
 The Notary v2 signature and SBoM would reference an artifact, such as the `wordpress:v5` image above. Notice the directionality of the references. One or more signatures may be added to a registry after the image was persisted. While an image knows of it's layers, and a Notary v2 signature knows of its config and blob, the Notary v2 signature declares a dependency to the artifact it's signing. The visualization indicates the references through solid lines as these reference types are said to be hard references. Just as the layers of an OCI Image are deleted (*ref-counted -1*), the blobs of a signature are deleted (*ref-counted -1*) when the signature is deleted. Likewise, when an artifact is deleted, the signatures and SBoM would be deleted (*ref-counted -1*) as the signatures and SBoMs have no value without the artifact they are signing.
 
 ![wordpress image with layers](media/wordpress-image-layers-sig-sbom.svg)
-
-### Helm Charts & CNAB
-
-A Helm chart can represent the images it references within the chart. These references are loose references as they may be persisted in different registries, or may change as a values file is updated. However, the chart may also be persisted together as a collection of artifacts in a registry. The lines are dotted to represent the loose reference. Deleting the `wordpress-chart:v5` may, or may not delete the images as the images have value unto themselves.
-
-![Wordpress Helm Chart](media/wordpress-helm-chart.svg)
-
-A CNAB may also be persisted with configuration information, along with a reference to its invocation image. The reference to the `helm-cli:v3` is solid line/hard reference. This allows the helm-cli to be deleted *(ref-count -1)* when the parent cnab is deleted. As the CNAB references a Helm chart, the `wordpress-chart:v5` is also represented as a loose reference as the helm chart and referenced images have value unto themselves.
-
-![Wordpress CNAB](media/wordpress-cnab.svg)
 
 ## Supported Scenarios
 
@@ -196,43 +178,6 @@ To support hard references, an additional dependencies collection is added to a 
 
 **A Notary v2 signature of the `mysql:8` image example:**
 
-> **OPTION A**
-
-```json
-{
-  "schemaVersion": 1,
-  "mediaType": "application/vnd.oci.artifact.manifest.v1+json",
-  "artifactType": "application/vnd.cncf.notary.v2+json",
-  "config": {
-    "mediaType": "application/vnd.cncf.notary.config.v2+json",
-    "digest": "sha256:b5b2b2c507a0944348e0303114d8d93aaaa081732b86451d9bce1f432a537bc7",
-    "size": 102
-  },
-  "blobs": [
-    {
-      "mediaType": "application/tar",
-      "digest": "sha256:9834876dcfb05cb167a5c24953eba58c4ac89b1adf57f28f2f9d09af107ee8f0",
-      "size": 32654
-    }
-  ],
-  "manifests": [
-    {
-      "mediaType": "application/vnd.oci.image.manifest.v1+json",
-      "digest": "sha256:3c3a4604a545cdc127456d94e421cd355bca5b528f4a9c1905b15da2eb4a4c6b",
-      "size": 16724,
-      "annotations": {
-        "oci.distribution.relationship": "depends-on"
-      }
-    }
-  ],
-  "annotations": {
-    "org.cncf.notary.v2.signature.subject": "docker.io"
-  }
-}
-```
-
-> **OPTION B**
-
 ```json
 {
   "schemaVersion": 1,
@@ -257,12 +202,12 @@ To support hard references, an additional dependencies collection is added to a 
       "size": 16724
     }
   ],
-  "references": [],
   "annotations": {
     "org.cncf.notary.v2.signature.subject": "docker.io"
   }
 }
 ```
+
 In the above example, the signing entity is Docker, which is represented as a notary scoped annotation: `"org.cncf.notary.v2.signature.subject": "docker.io"`
 
 #### OCI-Registry CLI
@@ -282,198 +227,6 @@ The `oci-reg copy` command would:
 - assure the manifest and layer/blob digests remain the same
 - copy any artifacts that are dependent on the source artifact-manifest, persisting them in the target registry. These _could_ include Notary v2 signatures, SBoMs, GPL source or other referenced artifacts.
 
-### Reference Artifacts
-
-There are a set of artifact types that declare references to other artifacts that may, or may not be stored in the same registry. The reference is important to note, indicating copying to be capable between environments, as well as generalized validation scenarios.
-
-#### Helm Reference
-
-![mysql image copy](./media/wordpress-helm-chart-copy.svg)
-
-In the above scenario, a helm chart is copied from a public registry to the ACME Rockets registry.  The `wordpress-chart:v5` is represented as an `application/vnd.oci.artifact.manifest.v1+json`. The `wordpress-chart:v5` helm chart references the `wordpress:v5` image and the `mysql:8` image. All three artifacts have Notary v2 signatures attesting to their authenticity.
-
-As the copy is initiated, the `oci.artifact.manifest` of the `wordpress-chart:v5` is evaluated. As the chart references the same version (digest) of the `mysql:8` image already in theACME Rockets registry, the copy skips duplicating the content and moves to copying the `wordpress:v5` image, the `wordpress-chart:v5` and their associated signatures.
-
-In this case, the images referenced in the chart existed in the source registry. However, this may not be the case in all scenarios. A helm chart may be acquired from a different location, referencing images from docker hub. This deferred validation is left to client tools, enabling common package management resolution scenarios.
-
-To support the loose references between artifacts, a `references` collection is added to the `oci.artifact.manifest`:
-
-**A `wordpress-chart:v5` Helm Chart example:**
-
-> **OPTION A**
-
-```json
-{
-  "schemaVersion": 1,
-  "mediaType": "application/vnd.oci.artifact.manifest.v1+json",
-  "artifactType": "application/vnd.cncf.helm.v3+json",
-  "config": {
-    "mediaType": "application/vnd.cncf.helm.config.v1+json",
-    "digest": "sha256:b5b2b2c507a0944348e0303114d8d93aaaa081732b86451d9bce1f432a537bc7",
-    "size": 0
-  },
-  "blobs": [
-    {
-      "mediaType": "application/tar",
-      "digest": "sha256:9834876dcfb05cb167a5c24953eba58c4ac89b1adf57f28f2f9d09af107ee8f0",
-      "size": 32654
-    }
-  ],
-  "manifests": [
-    {
-      "mediaType": "application/vnd.oci.image.manifest.config.v1+json",
-      "digest": "sha256:5c3a4604a545cdc127456d94e421cd355bca5b528f4a9c1905b15da2eb4a4c82",
-      "size": 1510,
-      "annotations": {
-        "oci.distribution.relationship": "references",
-        "oci.distribution.artifact": "wordpress:5.7"
-      }
-    },
-    {
-      "mediaType": "application/vnd.oci.image.manifest.config.v1+json",
-      "digest": "sha256:8c3a4604a545cdc127456d94e421cd355bca5b528f4a9c1905b15da2eb4a4c31",
-      "size": 1578,
-      "annotations": {
-        "oci.distribution.relationship": "references",
-        "oci.distribution.artifact": "mysql:8"
-      }
-    }
-  ]
-}
-```
-
-> **OPTION B**
-
-```json
-{
-  "schemaVersion": 1,
-  "mediaType": "application/vnd.oci.artifact.manifest.v1+json",
-  "artifactType": "application/vnd.cncf.helm.v3+json",
-  "config": {
-    "mediaType": "application/vnd.cncf.helm.config.v1+json",
-    "digest": "sha256:b5b2b2c507a0944348e0303114d8d93aaaa081732b86451d9bce1f432a537bc7",
-    "size": 0
-  },
-  "blobs": [
-    {
-      "mediaType": "application/tar",
-      "digest": "sha256:9834876dcfb05cb167a5c24953eba58c4ac89b1adf57f28f2f9d09af107ee8f0",
-      "size": 32654
-    }
-  ],
-  "manifests": [],
-  "references": [
-    {
-      "mediaType": "application/vnd.oci.image.manifest.config.v1+json",
-      "digest": "sha256:5c3a4604a545cdc127456d94e421cd355bca5b528f4a9c1905b15da2eb4a4c82",
-      "size": 1510,
-      "annotations": {
-        "oci.distribution.artifact": "wordpress:5.7"
-      }
-    },
-    {
-      "mediaType": "application/vnd.oci.image.manifest.config.v1+json",
-      "digest": "sha256:8c3a4604a545cdc127456d94e421cd355bca5b528f4a9c1905b15da2eb4a4c31",
-      "size": 1578,
-      "annotations": {
-        "oci.distribution.artifact": "mysql:8"
-      }
-    }
-  ]
-}
-```
-#### CNAB Reference
-
-A CNAB is yet another reference artifact. While the current CNAB spec incorporates the helm-cli ahd helm chart within an invocation image, the `artifact.manifest` provides more natural package management experiences where the references can be resolved based on the users intent, while leveraging the capabilities of an OCI compliant registry to store all OCI Artifact types.
-
-![mysql image copy](./media/wordpress-cnab-copy.svg)
-
-Similar to the Helm example, a CNAB is copied from a public registry to the ACME Rockets registry. The `wordpress-cnab:v5` CNAB declares references `-->` to an invocation image that includes the `helm-cli:v3`. This invocation image provides an environment to run `helm install` of the referenced `wordpress-chart:v5`. The CNAB includes an additional reference `-->` to `wordpress-chart:v5`. The chart includes references `-->` to the `wordpress:v5` and `mysql:8` images. Lastly, each artifact has a Notary v2 signature that points to `<--` the artifact they are signing.
-
-As the `oci-reg copy` command is executed, the graph of references are expanded. As the copy proceeds, only those artifacts that don't already exist in the target registry are required to be copied. The references may be hard bound to the digest, or loosely bound to the `artifact:tag` enabling more recently patched versions of a given `artifact:tag`. The CNAB and Helm `artifact.manifest` may declare how strict they wish to couple their references to **stable tags** or **unique digests**
-
-> **OPTION A**
-
-```json
-{
-  "schemaVersion": 1,
-  "mediaType": "application/vnd.oci.artifact.manifest.v1+json",
-  "artifactType": "application/vnd.cncf.cnab.v1",
-  "config": {
-    "mediaType": "application/vnd.cncf.cnab.config.v1+json",
-    "digest": "sha256:b5b2b2c507a0944348e0303114d8d93aaaa081732b86451d9bce1f432a537bc7",
-    "size": 134
-  },
-  "blobs": [
-    {
-      "mediaType": "application/tar",
-      "digest": "sha256:9834876dcfb05cb167a5c24953eba58c4ac89b1adf57f28f2f9d09af107ee8f0",
-      "size": 32654
-    }
-  ],
-  "manifests": [
-    {
-      "mediaType": "application/vnd.oci.image.manifest.v1+json",
-      "digest": "sha256:8c3a4604a545cdc127456d94e421cd355bca5b528f4a9c1905b15da2eb4a4c31",
-      "size": 1578,
-      "annotations": {
-        "oci.distribution.relationship": "references",
-        "oci.distribution.artifact": "helm-cli:3"
-      }
-    },
-    {
-      "mediaType": "application/vnd.oci.artifact.manifest.v1+json",
-      "digest": "sha256:5c3a4604a545cdc127456d94e421cd355bca5b528f4a9c1905b15da2eb4a4c82",
-      "size": 1510,
-      "annotations": {
-        "oci.distribution.relationship": "references",
-        "oci.distribution.artifact": "wordpress-chart:v5"
-      }
-   }
-  ]
-}
-```
-
-> **OPTION B**
-
-```json
-{
-  "schemaVersion": 1,
-  "mediaType": "application/vnd.oci.artifact.manifest.v1+json",
-  "artifactType": "application/vnd.cncf.cnab.v1+json.",
-  "config": {
-    "mediaType": "application/vnd.cncf.cnab.config.v1+json",
-    "digest": "sha256:b5b2b2c507a0944348e0303114d8d93aaaa081732b86451d9bce1f432a537bc7",
-    "size": 134
-  },
-  "blobs": [
-    {
-      "mediaType": "application/tar",
-      "digest": "sha256:9834876dcfb05cb167a5c24953eba58c4ac89b1adf57f28f2f9d09af107ee8f0",
-      "size": 32654
-    }
-  ],
-  "manifests": [],
-  "references": [
-    {
-      "mediaType": "application/vnd.oci.image.manifest.v1+json",
-      "digest": "sha256:8c3a4604a545cdc127456d94e421cd355bca5b528f4a9c1905b15da2eb4a4c31",
-      "size": 1578,
-      "annotations": {
-        "oci.distribution.artifact": "helm-cli:3"
-      }
-    },
-    {
-      "mediaType": "application/vnd.oci.artifact.manifest.v1+json",
-      "digest": "sha256:5c3a4604a545cdc127456d94e421cd355bca5b528f4a9c1905b15da2eb4a4c82",
-      "size": 1510,
-      "annotations": {
-        "oci.distribution.artifact": "wordpress-chart:v5"
-      }
-    }
-  ]
-}
-```
 ### Deletion
 
 Distribution-spec APIs will provide standard delete operations, including options for deleting referenced artifacts, or blocking a delete as the artifact is referenced by other artifacts. The `oci.artifact.manifest` collection will provide the information, as defined by the artifact author` for how an artifact should be handled for delete operations. The registry, nor the `oci-reg` cli would need to know about specific artifact implementations.
@@ -495,7 +248,6 @@ OCI Artifact Manifests provide the following types of references:
 
 - **Blobs:** Content that represents the artifact. These are analogues to layers from the OCI Image manifest and Config objects. Layers are renamed blobs as they represent a generic collection of content, as opposed to an ordered layered collection as defined by OCI Image Manifest. An artifact may treat them as ordered, but it is not required.
 - **Manifests** are dependent references to other artifacts that enhance the content, such as a Notary v2 signature or an SBoM. These dependencies are *unknown* by the original artifact as they are added at a later time. A registry would need to index these references as registry apis would request all content related to the source artifact.
-- **References** to other artifacts, used to complete a scenario, but may not be stored within the same repository or registry. These references are defined by the source artifact and known at the time of upload to a registry, such as a Helm chart that references other images. These references are included in the manifest and computed in the digest of the manifest.
 
 ### Blobs Collection
 
@@ -518,20 +270,6 @@ Examples include:
 - Artifact Meta-data
 
 `manifests` are collections of Content Descriptors.
-
-### References Collection
-
-The references collection is an optional collection of loose references to additional artifacts that complete a given scenario. The references may be stored in other repositories and/or other registries. The references collection allows an artifact to define a graph of content, used by it's client tools. While providing generic references to a registry that maintains the references without having to validate them for artifact submission or removal from a registry.
-
-References are made to specific content digests and tags, however it is up to the client to determine how to resolve the reference. The client MAY bind directly to the content digest, or bind to the tag, allowing newer patched versions of the tag. In all cases, a Notary v2 signature MAY be used to assure the content derives from the original authority.
-
-Examples include:
-
-- A helm chart referencing container images
-- A CNAB referencing Helm charts or other artifacts the CNAB may need to complete it's operation
-- A WASM that may reference other packages that may be stored in a registry.
-
-References are collections of OCI Artifact Content Descriptors.
 
 ## Annotations
 
